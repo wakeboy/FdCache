@@ -7,16 +7,16 @@ namespace FoneDynamics.Cache
 {
     public class AppCache : ICache<string, object>
     {
-        private object syncLock = new object();
+        private object _syncLock = new object();
 
         // Index of cached keys, to keep track of the when items have been updated
-        private readonly LinkedList<string> cacheIndex;
+        private readonly LinkedList<string> _cacheIndex;
 
         // Holds the cached items
-        private readonly ConcurrentDictionary<string, object> cache;
+        private readonly ConcurrentDictionary<string, object> _cache;
 
         // The maximum number of items which can be in the cache at any one time.
-        private readonly int capacity;
+        private readonly int _capacity;
 
         /// <summary>
         /// Construct an instance of the cache class
@@ -30,9 +30,9 @@ namespace FoneDynamics.Cache
                 throw new ArgumentOutOfRangeException("capacity", "capacity must be greater than 0");
             }
 
-            this.capacity = capacity;
-            this.cache = new ConcurrentDictionary<string, object>();
-            this.cacheIndex = new LinkedList<string>();
+            _capacity = capacity;
+            _cache = new ConcurrentDictionary<string, object>();
+            _cacheIndex = new LinkedList<string>();
         }
 
         /// <summary>
@@ -41,9 +41,9 @@ namespace FoneDynamics.Cache
         public int Count {
             get
             {
-                lock (this.syncLock)
+                lock (_syncLock)
                 {
-                    return this.cache.Count;
+                    return _cache.Count;
                 }
             }
         } 
@@ -59,16 +59,20 @@ namespace FoneDynamics.Cache
                 throw new ArgumentException("key", "Cache key must not be null or empty");
             }
 
-            if (Count >= capacity)
+            if (Count >= _capacity)
             {
                 EvictOldest();
             }
 
-            // Set the cache value with the cacheItem values
-            this.cache.AddOrUpdate(key, value, (existingKey, existingValue) => {
-                existingValue = value;
-                return existingValue;
-            });
+            if(!_cache.TryGetValue(key, out object existingValue))
+            {
+                _cache.TryAdd(key, value);
+            }
+            else
+            {
+                _cache.TryUpdate(key, value, existingValue);
+            }
+
             UpdateCacheIndex(key);
         }
 
@@ -78,7 +82,7 @@ namespace FoneDynamics.Cache
         /// </summary>
         public bool TryGetValue(string key, out object value)
         {
-            var found = this.cache.TryGetValue(key, out value);
+            var found = _cache.TryGetValue(key, out value);
 
             if (found)
             {
@@ -95,13 +99,13 @@ namespace FoneDynamics.Cache
         /// <param name="key">The Cache Index Key</param>
         public void UpdateCacheIndex(string key)
         {
-            lock (syncLock)
+            lock (_syncLock)
             {
-                if (cacheIndex.Contains(key))
+                if (_cacheIndex.Contains(key))
                 {
-                    cacheIndex.Remove(key);
+                    _cacheIndex.Remove(key);
                 }
-                cacheIndex.AddLast(key);
+                _cacheIndex.AddLast(key);
             }
         }
 
@@ -111,14 +115,13 @@ namespace FoneDynamics.Cache
         private void EvictOldest()
         {
             string oldestKey;
-            lock (syncLock)
+            lock (_syncLock)
             {
-                oldestKey = cacheIndex.First();
-                cacheIndex.Remove(oldestKey);
+                oldestKey = _cacheIndex.First();
+                _cacheIndex.Remove(oldestKey);
             }
 
-            object removedItem;
-            cache.TryRemove(oldestKey, out removedItem);
+            _cache.TryRemove(oldestKey, out object removedItem);
         }
     }
 }
