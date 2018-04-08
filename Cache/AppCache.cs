@@ -1,12 +1,21 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace FoneDynamics.Cache
 {
     public class AppCache : ICache<string, object>
     {
-        private readonly ConcurrentDictionary<string, CacheItem<object>> cache;
+        private object syncLock = new object();
+
+        // Index of cached keys, to keep track of the when items have been updated
+        private readonly LinkedList<string> cacheIndex;
+
+        // Holds the cached items
+        private readonly ConcurrentDictionary<string, object> cache;
+
+        // The maximum number of items which can be in the cache at any one time.
         private readonly int capacity;
 
         /// <summary>
@@ -22,13 +31,22 @@ namespace FoneDynamics.Cache
             }
 
             this.capacity = capacity;
-            this.cache = new ConcurrentDictionary<string, CacheItem<object>>();
+            this.cache = new ConcurrentDictionary<string, object>();
+            this.cacheIndex = new LinkedList<string>();
         }
 
         /// <summary>
         /// The number of items currently in the cache
         /// </summary>
-        public int Count => this.cache.Count;
+        public int Count {
+            get
+            {
+                lock (this.syncLock)
+                {
+                    return this.cache.Count;
+                }
+            }
+        } 
 
         /// <summary>
         /// Adds the value to the cache against the specified key.
@@ -41,19 +59,17 @@ namespace FoneDynamics.Cache
                 throw new ArgumentException("key", "Cache key must not be null or empty");
             }
 
-            if (cache.Count >= capacity)
+            if (Count >= capacity)
             {
-                RemoveOldest();
+                EvictOldest();
             }
 
-            var cacheItem = new CacheItem<object> { Data = value };
-
             // Set the cache value with the cacheItem values
-            this.cache.AddOrUpdate(key, cacheItem, (existingKey, existingValue) => {
-                existingValue.Data = cacheItem.Data;
-                existingValue.LastRetrieved = cacheItem.LastRetrieved;
+            this.cache.AddOrUpdate(key, value, (existingKey, existingValue) => {
+                existingValue = value;
                 return existingValue;
             });
+            UpdateCacheIndex(key);
         }
 
         /// <summary>
@@ -62,29 +78,47 @@ namespace FoneDynamics.Cache
         /// </summary>
         public bool TryGetValue(string key, out object value)
         {
-            CacheItem<object> result;
-            var found = this.cache.TryGetValue(key, out result);
+            var found = this.cache.TryGetValue(key, out value);
 
-            value = result?.Data;
-
-            // Update cache with the last retrieved datetime stamp
-            if (value != null)
+            if (found)
             {
-                AddOrUpdate(key, result.Data);
+                UpdateCacheIndex(key);
             }
 
             return found;
         }
 
         /// <summary>
-        /// TODO: improved to 0(1) performance
+        /// Update the cache index; to keep track of which item was last accessed
+        /// The most recent accessed item should always be last item in the array list.
         /// </summary>
-        private void RemoveOldest()
+        /// <param name="key">The Cache Index Key</param>
+        public void UpdateCacheIndex(string key)
         {
-            var oldestKey = this.cache.OrderBy(item => item.Value.LastRetrieved).FirstOrDefault();
+            lock (syncLock)
+            {
+                if (cacheIndex.Contains(key))
+                {
+                    cacheIndex.Remove(key);
+                }
+                cacheIndex.AddLast(key);
+            }
+        }
 
-            CacheItem<object> removedItem;
-            cache.TryRemove(oldestKey.Key, out removedItem);
+        /// <summary>
+        /// Remove the oldest item from the Cache and the Cache Index
+        /// </summary>
+        private void EvictOldest()
+        {
+            string oldestKey;
+            lock (syncLock)
+            {
+                oldestKey = cacheIndex.First();
+                cacheIndex.Remove(oldestKey);
+            }
+
+            object removedItem;
+            cache.TryRemove(oldestKey, out removedItem);
         }
     }
 }

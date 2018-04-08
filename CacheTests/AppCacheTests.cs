@@ -1,6 +1,10 @@
 using FluentAssertions;
 using FoneDynamics.Cache;
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Xunit;
 
 namespace FoneDynamics.CacheTests
@@ -66,6 +70,46 @@ namespace FoneDynamics.CacheTests
             cache.AddOrUpdate("4", 4);
 
             cache.Count.Should().Be(3);
+        }
+
+        [Fact]
+        public void Eviction_Policy_Evicts_Item2()
+        {
+            ICache<string, object> cache = new AppCache(3);
+            object item1Result;
+            object item2Result;
+
+            cache.AddOrUpdate("1", 1);
+            cache.AddOrUpdate("2", 2);
+            cache.AddOrUpdate("3", 3);
+            cache.TryGetValue("1", out item1Result);
+            cache.AddOrUpdate("4", 4);
+
+            cache.TryGetValue("2", out item2Result);
+            
+            item2Result.Should().BeNull();
+            cache.Count.Should().Be(3);
+        }
+
+        [Fact]
+        public void Should_Not_Collided_When_Adding_Same_Key_From_Multiple_Treads()
+        {
+            ICache<string, object> cache = new AppCache(3);
+
+            Task[] tasks = new Task[100];
+            for (var i = 0; i < 100; i++)
+            {
+                tasks[i] = Task.Run(() =>
+                {
+                    cache.AddOrUpdate("1", 1);
+                    Thread.Sleep(10);
+                });
+            }
+
+            Task.WaitAll(tasks);
+            
+            cache.Count.Should().Be(1);
+
         }
     }
 }
